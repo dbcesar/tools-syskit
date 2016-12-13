@@ -380,6 +380,7 @@ module Syskit
                     state_port = remote_task.raw_port('state')
                     state_reader = state_port.reader(
                         type: :buffer, size: STATE_READER_BUFFER_SIZE, init: true,
+                        transport: Orocos::TRANSPORT_CORBA,
                         distance: distance)
                     state_reader.extend Orocos::TaskContext::StateReader
                     state_reader.state_symbols = remote_task.state_symbols

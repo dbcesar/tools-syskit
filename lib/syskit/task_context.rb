@@ -79,7 +79,8 @@ module Syskit
             def initialize_remote_handles(remote_handles)
                 @orocos_task       = remote_handles.handle
                 @orocos_task.model = model.orogen_model
-                @state_reader      = remote_handles.state_reader
+                @state_getter = remote_handles.state_getter
+                @state_reader = remote_handles.state_reader
 
                 remote_handles.default_properties.each do |p_name, p_value|
                     syskit_p = property(p_name)
@@ -402,6 +403,12 @@ module Syskit
             # @return [Orocos::TaskContext::StateReader]
             attr_reader :state_reader
 
+            # The state reader object used to explicitely read state from the
+            # task
+            #
+            # @return [RemoteStateGetter]
+            attr_reader :state_getter
+
             # Called at each cycle to update the orogen_state attribute for this
             # task using the values read from the state reader
             def update_orogen_state
@@ -417,22 +424,39 @@ module Syskit
                 end
             end
 
+            def read_current_state
+                # There is somewhere an issue lurking where the state port does
+                # not report the "right" state. It does not look like a buffer
+                # overrun (but could be one)
+                #
+                # Check for consistency here
+                while state = state_getter.read_new
+                    from_getter = state
+                end
+                from_getter ||= state_getter.read
+
+                if state_reader != state_getter
+                    while state = state_reader.read_new
+                        from_reader = state
+                    end
+                    from_reader ||= state_reader.read
+                else
+                    from_reader = from_getter
+                end
+
+                configurable_state_from_getter = [:STOPPED, :PRE_OPERATIONAL].include?(from_getter) ||
+                    orocos_task.exception_state?(from_getter)
+                configurable_state_from_reader = [:STOPPED, :PRE_OPERATIONAL].include?(from_reader) ||
+                    orocos_task.exception_state?(from_reader)
+
+                if configurable_state_from_reader ^ configurable_state_from_getter
+                    fatal "state reader of #{self} reports the #{from_reader} state which does not match #{from_getter}, reported by the remote getter"
+                end
+                from_getter
+            end
+
             # The set of state names from which #configure can be called
             RTT_CONFIGURABLE_STATES = [:EXCEPTION, :STOPPED, :PRE_OPERATIONAL]
-
-            # @api private
-            #
-            # Pull all state changes that are still queued within the state
-            # reader and returns the last one
-            #
-            # It is destructive, as it does "forget" any pending state changes
-            # currently queued.
-            def read_current_state
-                while new_state = state_reader.read_new
-                    state = new_state
-                end
-                state || state_reader.read
-            end
 
             # Returns true if this component needs to be setup by calling the
             # #setup method, or if it can be used as-is
@@ -643,6 +667,10 @@ module Syskit
                 if setup?
                     raise ArgumentError, "#{self} is already set up"
                 end
+
+                # Clear the state reader to remove any stale information. For
+                # now the promise explicitely reads the remote state itself
+                state_reader.clear
 
                 promise = prepare_for_setup(promise)
                 # This calls #configure
@@ -857,9 +885,6 @@ module Syskit
 
             on :stop do |event|
                 info "stopped #{self}"
-                if state_reader.respond_to?(:pause)
-                    state_reader.pause
-                end
             end
 
             # Default implementation of the configure method.

@@ -375,6 +375,8 @@ module Syskit
                 state_getter = RemoteStateGetter.new(
                     remote_task,
                     initial_state: remote_task.rtt_state)
+                state_getter.resume
+                state_getter.wait
 
                 if remote_task.model.extended_state_support?
                     state_port = remote_task.raw_port('state')

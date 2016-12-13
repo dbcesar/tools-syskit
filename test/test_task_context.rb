@@ -499,6 +499,7 @@ module Syskit
                 task = syskit_stub_deploy_and_configure('Task') {}
                 @task = flexmock(task)
                 @orocos_task = flexmock(task.orocos_task)
+                task.state_getter.wait
             end
 
             it "returns true for a fully instanciated task whose state is PRE_OPERATIONAL" do
@@ -508,8 +509,9 @@ module Syskit
                 task = syskit_stub_and_deploy "ConcurrentConfigurationTask"
                 syskit_start_execution_agents(task)
                 plan.add_permanent_task(other_task = task.execution_agent.task(task.orocos_name))
-                assert task.ready_for_setup?
+                task.state_getter.wait
                 promise = Syskit::Runtime.start_task_setup(other_task)
+                task.state_getter.wait
                 refute task.ready_for_setup?
                 execution_engine.join_all_waiting_work
                 assert task.ready_for_setup?
@@ -521,6 +523,7 @@ module Syskit
                 assert task.ready_for_setup?
                 flexmock(other_task.orocos_task).should_receive(:configure).and_raise(Orocos::StateTransitionFailed)
                 promise = Syskit::Runtime.start_task_setup(other_task)
+                task.state_getter.wait
                 refute task.ready_for_setup?
                 execution_engine.join_all_waiting_work
                 assert task.ready_for_setup?
@@ -566,25 +569,36 @@ module Syskit
         end
 
         describe "#read_current_state" do
-            attr_reader :task, :state_reader
+            attr_reader :task, :state_getter
             before do
-                @task = syskit_stub_and_deploy('Task') {}
+                @task = syskit_stub_and_deploy('Task') do
+                    runtime_states :CUSTOM
+                end
                 syskit_start_execution_agents(task)
-                @state_reader = flexmock(task.state_reader)
+                @state_getter = flexmock(task.state_getter)
             end
             it "returns nil if both #read and #read_new return nil" do
-                state_reader.should_receive(:read_new).and_return(nil).once
-                state_reader.should_receive(:read).and_return(nil).once
+                state_getter.should_receive(:read_new).and_return(nil).once
+                state_getter.should_receive(:read).and_return(nil).once
                 assert_nil task.read_current_state
             end
             it "returns the value of the last non-nil #read_new" do
-                state_reader.should_receive(:read_new).and_return(1, 2, 3, nil)
+                state_getter.should_receive(:read_new).and_return(1, 2, 3, nil)
                 assert_equal 3, task.read_current_state
             end
             it "returns the value of #read if #read_new returns nil" do
-                state_reader.should_receive(:read_new).and_return(nil)
-                state_reader.should_receive(:read).and_return(3)
+                state_getter.should_receive(:read_new).and_return(nil)
+                state_getter.should_receive(:read).and_return(3)
                 assert_equal 3, task.read_current_state
+            end
+            it "issues a fatal message if the status returned by the state getter and by the state reader differ" do
+                state_reader = flexmock
+                flexmock(task).should_receive(state_reader: state_reader)
+                state_reader.should_receive(:read_new).and_return(:CUSTOM, nil)
+                state_getter.should_receive(:read_new).and_return(:STOPPED, nil)
+                flexmock(task).should_receive(:fatal).once.
+                    with("state reader of #{task} reports the CUSTOM state which does not match STOPPED, reported by the remote getter")
+                assert_equal :STOPPED, task.read_current_state
             end
         end
 

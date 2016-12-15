@@ -597,10 +597,6 @@ module Syskit
             #
             # Setup operations that must be performed before
             # {Component#perform_setup} is called by {#perform_setup}
-            def preparing_for_setup?
-                @preparing_for_setup && !@preparing_for_setup.complete?
-            end
-
             def prepare_for_setup(promise)
                 promise.on_success(description: "#{self}#prepare_for_setup#init") do
                         state_reader.clear
